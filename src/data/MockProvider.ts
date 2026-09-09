@@ -1,3 +1,4 @@
+// Kept as a fallback reference for local development.
 import type { DraftState, Recommendation } from '../domain/types'
 import type { DatasetSlice, StatsProvider } from './StatsProvider'
 
@@ -16,7 +17,6 @@ export class MockProvider implements StatsProvider {
 
     const base = HEROES.filter((h) => !excluded.has(h.id))
 
-    // Very naive scoring for scaffold.
     return base.map((h, i) => ({
       heroId: h.id,
       heroName: h.name,

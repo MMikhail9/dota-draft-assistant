@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { DraftState, HeroId, Role } from '../domain/types'
 import type { DatasetSlice } from '../data/StatsProvider'
-import { MockProvider } from '../data/MockProvider'
 import { sortRecommendations } from '../scoring/score'
-import { fetchOpenDotaHeroes } from '../data/opendota'
+import { fetchOpenDotaHeroStats } from '../data/opendota'
 import { toCatalog, type HeroCatalog } from '../data/HeroCatalog'
 import { HeroPicker } from './HeroPicker'
-
-const provider = new MockProvider()
+import { OpenDotaProvider } from '../data/OpenDotaProvider'
 
 export function App() {
   const [catalog, setCatalog] = useState<HeroCatalog | null>(null)
@@ -18,9 +16,9 @@ export function App() {
     async function load() {
       try {
         setCatalogError(null)
-        const heroes = await fetchOpenDotaHeroes()
+        const stats = await fetchOpenDotaHeroStats()
         if (cancelled) return
-        setCatalog(toCatalog(heroes))
+        setCatalog(toCatalog(stats))
       } catch (e) {
         if (cancelled) return
         setCatalogError(e instanceof Error ? e.message : 'Failed to load heroes')
@@ -31,6 +29,8 @@ export function App() {
       cancelled = true
     }
   }, [])
+
+  const provider = useMemo(() => (catalog ? new OpenDotaProvider(catalog) : null), [catalog])
 
   const [allies, setAllies] = useState<HeroId[]>([])
   const [enemies, setEnemies] = useState<HeroId[]>([])
@@ -44,11 +44,12 @@ export function App() {
   const [recs, setRecs] = useState<any[]>([])
 
   async function refresh() {
+    if (!provider) return
     setLoading(true)
     setError(null)
     try {
       const result = await provider.getRecommendations(draft, slice)
-      setRecs(sortRecommendations(result))
+      setRecs(sortRecommendations(result).slice(0, 10))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')
     } finally {
@@ -73,7 +74,7 @@ export function App() {
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold">Dota Draft Assistant</h1>
           <p className="text-sm text-gray-400">
-            Draft picks → recommendations with explanations (mock scoring; heroes from OpenDota).
+            Draft picks → recommendations with explanations (OpenDota matchups; MVP heuristics).
           </p>
           {catalogError ? <p className="text-sm text-red-400">{catalogError}</p> : null}
         </header>
@@ -100,11 +101,14 @@ export function App() {
               className="w-full rounded-md border border-white/10 bg-black/30 p-2"
               value={slice.mmrBracket}
               onChange={(e) => setSlice((s) => ({ ...s, mmrBracket: e.target.value as any }))}
+              disabled
+              title="Not used yet in MVP"
             >
               <option value="low">Low</option>
               <option value="mid">Mid</option>
               <option value="high">High</option>
             </select>
+            <div className="text-[11px] text-gray-500">(Not wired yet)</div>
           </div>
 
           <div className="space-y-2">
@@ -115,11 +119,14 @@ export function App() {
               onChange={(e) =>
                 setSlice((s) => ({ ...s, timeWindowDays: Number(e.target.value) as any }))
               }
+              disabled
+              title="Not used yet in MVP"
             >
               <option value={30}>30 days</option>
               <option value={60}>60 days</option>
               <option value={90}>90 days</option>
             </select>
+            <div className="text-[11px] text-gray-500">(Not wired yet)</div>
           </div>
         </section>
 
@@ -160,10 +167,11 @@ export function App() {
           <button
             className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
             onClick={refresh}
-            disabled={loading}
+            disabled={loading || !provider}
           >
             {loading ? 'Calculating…' : 'Get recommendations'}
           </button>
+          {!provider ? <div className="text-sm text-gray-400">Loading…</div> : null}
           {error ? <div className="text-sm text-red-400">{error}</div> : null}
         </section>
 
