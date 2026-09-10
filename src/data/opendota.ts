@@ -24,6 +24,15 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+class RetryableHttpError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message)
+  }
+}
+
 async function fetchJson<T>(url: string, opts: FetchJsonOptions): Promise<T> {
   const cached = getCached<T>(opts.cacheKey)
   if (cached) return cached
@@ -58,15 +67,6 @@ async function fetchJson<T>(url: string, opts: FetchJsonOptions): Promise<T> {
   throw lastErr instanceof Error ? lastErr : new Error('OpenDota request failed')
 }
 
-class RetryableHttpError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-  ) {
-    super(message)
-  }
-}
-
 export async function fetchOpenDotaHeroStats(): Promise<OpenDotaHeroStats[]> {
   return fetchJson<OpenDotaHeroStats[]>('https://api.opendota.com/api/heroStats', {
     cacheKey: 'opendota:heroStats:v1',
@@ -97,6 +97,7 @@ export async function fetchSynergyWinrate(params: {
 }): Promise<{ games: number; winrate: number } | null> {
   const { heroA, heroB } = params
 
+  // Co-play winrate: both heroes on same team.
   const sql = `
 SELECT
   COUNT(*) AS games,
