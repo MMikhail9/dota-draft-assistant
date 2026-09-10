@@ -84,7 +84,6 @@ export async function fetchHeroMatchups(heroId: number): Promise<OpenDotaMatchup
 }
 
 // OpenDota Explorer provides SQL access to public match data.
-// We'll use it to estimate co-play (synergy) for a hero pair.
 export type OpenDotaExplorerResult = {
   rows: Array<Record<string, string | number | null>>
 }
@@ -95,8 +94,6 @@ export async function fetchSynergyWinrate(params: {
 }): Promise<{ games: number; winrate: number } | null> {
   const { heroA, heroB } = params
 
-  // We query matches where both heroes are on the same team.
-  // This is a lightweight MVP query and may be sampled/limited by OpenDota.
   const sql = `
 SELECT
   COUNT(*) AS games,
