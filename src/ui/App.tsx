@@ -6,6 +6,7 @@ import { fetchOpenDotaHeroStats } from '../data/opendota'
 import { toCatalog, type HeroCatalog } from '../data/HeroCatalog'
 import { HeroPicker } from './HeroPicker'
 import { OpenDotaProvider } from '../data/OpenDotaProvider'
+import { useDebouncedEffect } from './useDebouncedEffect'
 
 export function App() {
   const [catalog, setCatalog] = useState<HeroCatalog | null>(null)
@@ -39,6 +40,7 @@ export function App() {
 
   const draft: DraftState = useMemo(() => ({ allies, enemies, role }), [allies, enemies, role])
 
+  const [autoRecalc, setAutoRecalc] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [recs, setRecs] = useState<any[]>([])
@@ -56,6 +58,18 @@ export function App() {
       setLoading(false)
     }
   }
+
+  useDebouncedEffect(
+    () => {
+      if (!autoRecalc) return
+      if (!provider) return
+      // Require at least 1 enemy pick for meaningful matchup-based output.
+      if (enemies.length === 0) return
+      refresh()
+    },
+    350,
+    [autoRecalc, provider, enemies.join(','), allies.join(','), role],
+  )
 
   function addHero(list: HeroId[], setList: (v: HeroId[]) => void, shortId: string) {
     const v = shortId.trim()
@@ -163,7 +177,7 @@ export function App() {
           />
         </section>
 
-        <section className="flex items-center gap-3">
+        <section className="flex flex-wrap items-center gap-3">
           <button
             className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
             onClick={refresh}
@@ -171,8 +185,21 @@ export function App() {
           >
             {loading ? 'Calculating…' : 'Get recommendations'}
           </button>
+
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={autoRecalc}
+              onChange={(e) => setAutoRecalc(e.target.checked)}
+            />
+            Auto recalc (after changes)
+          </label>
+
           {!provider ? <div className="text-sm text-gray-400">Loading…</div> : null}
           {error ? <div className="text-sm text-red-400">{error}</div> : null}
+          {autoRecalc && enemies.length === 0 ? (
+            <div className="text-sm text-gray-400">Pick at least 1 enemy to auto-recalc.</div>
+          ) : null}
         </section>
 
         <section className="space-y-3">
@@ -202,7 +229,9 @@ export function App() {
               </div>
             ))}
             {recs.length === 0 ? (
-              <div className="text-sm text-gray-400">No results yet. Click the button.</div>
+              <div className="text-sm text-gray-400">
+                No results yet. Pick enemies and click the button.
+              </div>
             ) : null}
           </div>
         </section>

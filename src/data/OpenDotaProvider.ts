@@ -35,14 +35,20 @@ function roleFitScore(roles: string[], pos: number): number {
   return hits / want.length
 }
 
+type EnemyCounterDetail = {
+  enemyShortId: string
+  enemyName: string
+  games: number
+  candidateWinrate: number // estimated candidate winrate vs enemy
+  delta: number // candidate wr - 0.5
+}
+
 export class OpenDotaProvider implements StatsProvider {
   constructor(private catalog: HeroCatalog) {}
 
   async getRecommendations(draft: DraftState, slice: DatasetSlice): Promise<Recommendation[]> {
     const excluded = new Set([...draft.allies, ...draft.enemies])
 
-    // Use enemy matchups to estimate how good a candidate is vs those enemies.
-    // We invert enemy-vs-candidate advantage.
     const enemyTables: Record<string, OpenDotaMatchupRow[]> = {}
     for (const e of draft.enemies) {
       const hero = this.catalog.byShortId.get(e)
@@ -52,37 +58,60 @@ export class OpenDotaProvider implements StatsProvider {
 
     const candidates = this.catalog.heroes
       .filter((h) => !excluded.has(h.shortId))
-      .slice(0, 80) // MVP: cap candidate set for performance
+      .slice(0, 100)
 
     const recs: Recommendation[] = candidates.map((c, idx) => {
       let counterScore = 0
       let counterGames = 0
+      const details: EnemyCounterDetail[] = []
 
       for (const enemyShortId of draft.enemies) {
         const rows = enemyTables[enemyShortId]
         if (!rows) continue
-        const candidateNumeric = c.numericId
-        const row = rows.find((r) => r.hero_id === candidateNumeric)
+
+        const row = rows.find((r) => r.hero_id === c.numericId)
         if (!row) continue
 
         const wrEnemyVsCandidate = winrate(row.games_played, row.wins)
-        const advEnemy = wrEnemyVsCandidate - 0.5
+        const wrCandidateVsEnemy = 1 - wrEnemyVsCandidate
+        const delta = wrCandidateVsEnemy - 0.5
 
-        // If enemy is advantaged, candidate is disadvantaged and vice versa.
-        counterScore += -advEnemy
+        counterScore += delta
         counterGames += row.games_played
+
+        const enemyHero = this.catalog.byShortId.get(enemyShortId)
+        details.push({
+          enemyShortId,
+          enemyName: enemyHero?.name ?? enemyShortId,
+          games: row.games_played,
+          candidateWinrate: wrCandidateVsEnemy,
+          delta,
+        })
       }
+
+      details.sort((a, b) => b.delta - a.delta)
+      const best = details.slice(0, 2)
 
       const roleFit = roleFitScore(c.roles, draft.role)
 
       // Normalize to a 0..100-ish score.
       const score =
         60 +
-        clamp(counterScore * 120, -30, 30) +
+        clamp(counterScore * 110, -35, 35) +
         clamp((roleFit - 0.5) * 30, -15, 15) -
-        idx * 0.05
+        idx * 0.03
 
       const sampleSize = counterGames
+
+      const bestStr =
+        best.length === 0
+          ? 'No matchup rows for selected enemies'
+          : best
+              .map(
+                (b) =>
+                  `${b.enemyName}: ${Math.round(b.candidateWinrate * 100)}% (Δ${Math.round(b.delta * 1000) / 10}%, games=${b.games})`,
+              )
+              .join('; ')
 
       return {
         heroId: c.shortId,
@@ -92,14 +121,18 @@ export class OpenDotaProvider implements StatsProvider {
         sampleSize,
         explanations: [
           {
+            label: 'Top counters (est.)',
+            value: bestStr,
+            evidence: 'Computed from enemy matchup tables (OpenDota)',
+          },
+          {
             label: 'Role fit (approx)',
             value: `${Math.round(roleFit * 100)}%`,
             evidence: c.roles.length ? c.roles.join(', ') : 'No roles data',
           },
           {
-            label: 'Vs selected enemies',
-            value: `${Math.round(counterScore * 1000) / 10}% net`,
-            evidence: `Based on enemy matchup tables; games=${counterGames}`,
+            label: 'Total matchup sample',
+            value: `${counterGames} games`,
           },
           {
             label: 'Slice',
