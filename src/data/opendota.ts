@@ -75,12 +75,15 @@ export async function fetchOpenDotaHeroStats(): Promise<OpenDotaHeroStats[]> {
 }
 
 export async function fetchHeroMatchups(heroId: number): Promise<OpenDotaMatchupRow[]> {
-  return fetchJson<OpenDotaMatchupRow[]>(`https://api.opendota.com/api/heroes/${heroId}/matchups`, {
-    cacheKey: `opendota:heroMatchups:v1:${heroId}`,
-    ttlMs: 1000 * 60 * 60 * 24,
-    retries: 2,
-    minDelayMs: 400,
-  })
+  return fetchJson<OpenDotaMatchupRow[]>(
+    `https://api.opendota.com/api/heroes/${heroId}/matchups`,
+    {
+      cacheKey: `opendota:heroMatchups:v1:${heroId}`,
+      ttlMs: 1000 * 60 * 60 * 24,
+      retries: 2,
+      minDelayMs: 400,
+    },
+  )
 }
 
 // OpenDota Explorer provides SQL access to public match data.
@@ -108,6 +111,7 @@ LIMIT 1
 `.trim()
 
   const url = `https://api.opendota.com/api/explorer?sql=${encodeURIComponent(sql)}`
+
   const res = await fetchJson<OpenDotaExplorerResult>(url, {
     cacheKey: `opendota:synergy:v1:${heroA}:${heroB}`,
     ttlMs: 1000 * 60 * 60 * 24,
