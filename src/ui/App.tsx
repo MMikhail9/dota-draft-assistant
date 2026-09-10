@@ -9,6 +9,29 @@ import { OpenDotaProvider } from '../data/OpenDotaProvider'
 import { useDebouncedEffect } from './useDebouncedEffect'
 import { Modal } from './Modal'
 
+function scoreTone(score: number): {
+  pillClass: string
+  scoreClass: string
+} {
+  // Score baseline is around ~60.
+  if (score >= 73) {
+    return {
+      pillClass: 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100',
+      scoreClass: 'text-emerald-200',
+    }
+  }
+  if (score >= 63) {
+    return {
+      pillClass: 'border-white/10 bg-black/20 text-gray-200',
+      scoreClass: 'text-gray-100',
+    }
+  }
+  return {
+    pillClass: 'border-rose-400/20 bg-rose-500/10 text-rose-100',
+    scoreClass: 'text-rose-200',
+  }
+}
+
 export function App() {
   const [catalog, setCatalog] = useState<HeroCatalog | null>(null)
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -235,35 +258,38 @@ export function App() {
               }
             >
               <div className="grid gap-3">
-                {recs.map((r) => (
-                  <button
-                    key={r.heroId}
-                    className="group w-full rounded-xl border border-white/10 bg-gradient-to-b from-white/6 to-white/4 p-4 text-left hover:border-white/20 hover:bg-white/5"
-                    onClick={() => setSelected(r)}
-                    type="button"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-lg font-semibold">{r.heroName}</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-300">
-                          <Pill label={`Score ${r.score}`} />
-                          <Pill label={`Confidence ${r.confidence}`} />
-                          <Pill label={`Games ${r.sampleSize}`} />
-                          <span className="text-xs text-gray-500">Click for details</span>
+                {recs.map((r) => {
+                  const tone = scoreTone(r.score)
+                  return (
+                    <button
+                      key={r.heroId}
+                      className="group w-full rounded-xl border border-white/10 bg-gradient-to-b from-white/6 to-white/4 p-4 text-left hover:border-white/20 hover:bg-white/5"
+                      onClick={() => setSelected(r)}
+                      type="button"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-lg font-semibold">{r.heroName}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-300">
+                            <Pill label={`Score ${r.score}`} className={tone.pillClass} />
+                            <Pill label={`Confidence ${r.confidence}`} />
+                            <Pill label={`Games ${r.sampleSize}`} />
+                            <span className="text-xs text-gray-500">Click for details</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <ul className="mt-3 space-y-2 text-sm text-gray-200">
-                      {r.explanations.slice(0, 2).map((e: any, idx: number) => (
-                        <li key={idx} className="leading-snug">
-                          <div className="text-xs text-gray-400">{e.label}</div>
-                          <div className="text-sm text-gray-200">{e.value}</div>
-                        </li>
-                      ))}
-                    </ul>
-                  </button>
-                ))}
+                      <ul className="mt-3 space-y-2 text-sm text-gray-200">
+                        {r.explanations.slice(0, 2).map((e: any, idx: number) => (
+                          <li key={idx} className="leading-snug">
+                            <div className="text-xs text-gray-400">{e.label}</div>
+                            <div className="text-sm text-gray-200">{e.value}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    </button>
+                  )
+                })}
 
                 {recs.length === 0 ? (
                   <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-6 text-sm text-gray-300">
@@ -286,8 +312,8 @@ export function App() {
         </section>
 
         <footer className="pb-6 text-xs text-gray-500">
-          MVP note: synergy is currently heuristic; counters use OpenDota matchup aggregates. Results
-          can be noisy for rare matchups.
+          MVP note: counters use OpenDota matchup aggregates; synergy uses OpenDota Explorer (public
+          matches) and may be noisy or unavailable for some pairs.
         </footer>
       </main>
 
@@ -299,7 +325,7 @@ export function App() {
         {selected ? (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Pill label={`Score ${selected.score}`} />
+              <Pill label={`Score ${selected.score}`} className={scoreTone(selected.score).pillClass} />
               <Pill label={`Confidence ${selected.confidence}`} />
               <Pill label={`Games ${selected.sampleSize}`} />
             </div>
@@ -341,9 +367,13 @@ function Labeled(props: { label: string; children: React.ReactNode }) {
   )
 }
 
-function Pill(props: { label: string }) {
+function Pill(props: { label: string; className?: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-2 py-1 font-mono text-[11px] text-gray-200">
+    <span
+      className={`inline-flex items-center rounded-full border border-white/10 bg-black/20 px-2 py-1 font-mono text-[11px] text-gray-200 ${
+        props.className ?? ''
+      }`}
+    >
       {props.label}
     </span>
   )
