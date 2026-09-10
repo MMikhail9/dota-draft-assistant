@@ -75,15 +75,12 @@ export async function fetchOpenDotaHeroStats(): Promise<OpenDotaHeroStats[]> {
 }
 
 export async function fetchHeroMatchups(heroId: number): Promise<OpenDotaMatchupRow[]> {
-  return fetchJson<OpenDotaMatchupRow[]>(
-    `https://api.opendota.com/api/heroes/${heroId}/matchups`,
-    {
-      cacheKey: `opendota:heroMatchups:v1:${heroId}`,
-      ttlMs: 1000 * 60 * 60 * 24,
-      retries: 2,
-      minDelayMs: 400,
-    },
-  )
+  return fetchJson<OpenDotaMatchupRow[]>(`https://api.opendota.com/api/heroes/${heroId}/matchups`, {
+    cacheKey: `opendota:heroMatchups:v1:${heroId}`,
+    ttlMs: 1000 * 60 * 60 * 24,
+    retries: 2,
+    minDelayMs: 400,
+  })
 }
 
 // OpenDota Explorer provides SQL access to public match data.
@@ -97,7 +94,6 @@ export async function fetchSynergyWinrate(params: {
 }): Promise<{ games: number; winrate: number } | null> {
   const { heroA, heroB } = params
 
-  // Co-play winrate: both heroes on same team.
   const sql = `
 SELECT
   COUNT(*) AS games,
@@ -111,7 +107,8 @@ WHERE pmA.hero_id = ${heroA}
 LIMIT 1
 `.trim()
 
-  const url = `https://api.opendota.com/api/explorer?sql=${encodeURIComponent(sql)}`
+  const qs = new URLSearchParams({ sql })
+  const url = `https://api.opendota.com/api/explorer?${qs.toString()}`
 
   const res = await fetchJson<OpenDotaExplorerResult>(url, {
     cacheKey: `opendota:synergy:v1:${heroA}:${heroB}`,
