@@ -1,12 +1,38 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DraftState, HeroId, Role } from '../domain/types'
 import type { DatasetSlice } from '../data/StatsProvider'
-import { MockProvider } from '../data/MockProvider'
 import { sortRecommendations } from '../scoring/score'
-
-const provider = new MockProvider()
+import { fetchOpenDotaHeroStats } from '../data/opendota'
+import { toCatalog, type HeroCatalog } from '../data/HeroCatalog'
+import { HeroPicker } from './HeroPicker'
+import { OpenDotaProvider } from '../data/OpenDotaProvider'
+import { useDebouncedEffect } from './useDebouncedEffect'
 
 export function App() {
+  const [catalog, setCatalog] = useState<HeroCatalog | null>(null)
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        setCatalogError(null)
+        const stats = await fetchOpenDotaHeroStats()
+        if (cancelled) return
+        setCatalog(toCatalog(stats))
+      } catch (e) {
+        if (cancelled) return
+        setCatalogError(e instanceof Error ? e.message : 'Failed to load heroes')
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const provider = useMemo(() => (catalog ? new OpenDotaProvider(catalog) : null), [catalog])
+
   const [allies, setAllies] = useState<HeroId[]>([])
   const [enemies, setEnemies] = useState<HeroId[]>([])
   const [role, setRole] = useState<Role>(1)
@@ -14,16 +40,18 @@ export function App() {
 
   const draft: DraftState = useMemo(() => ({ allies, enemies, role }), [allies, enemies, role])
 
+  const [autoRecalc, setAutoRecalc] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [recs, setRecs] = useState<any[]>([])
 
   async function refresh() {
+    if (!provider) return
     setLoading(true)
     setError(null)
     try {
       const result = await provider.getRecommendations(draft, slice)
-      setRecs(sortRecommendations(result))
+      setRecs(sortRecommendations(result).slice(0, 10))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unknown error')
     } finally {
@@ -31,8 +59,20 @@ export function App() {
     }
   }
 
-  function add(list: HeroId[], setList: (v: HeroId[]) => void, value: string) {
-    const v = value.trim()
+  useDebouncedEffect(
+    () => {
+      if (!autoRecalc) return
+      if (!provider) return
+      // Require at least 1 enemy pick for meaningful matchup-based output.
+      if (enemies.length === 0) return
+      refresh()
+    },
+    350,
+    [autoRecalc, provider, enemies.join(','), allies.join(','), role],
+  )
+
+  function addHero(list: HeroId[], setList: (v: HeroId[]) => void, shortId: string) {
+    const v = shortId.trim()
     if (!v) return
     if (list.includes(v)) return
     setList([...list, v])
@@ -48,8 +88,9 @@ export function App() {
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold">Dota Draft Assistant</h1>
           <p className="text-sm text-gray-400">
-            MVP scaffold: picks → recommendations with explanations (mock data).
+            Draft picks → recommendations with explanations (OpenDota matchups; MVP heuristics).
           </p>
+          {catalogError ? <p className="text-sm text-red-400">{catalogError}</p> : null}
         </header>
 
         <section className="grid gap-4 rounded-lg border border-white/10 bg-white/5 p-4 md:grid-cols-3">
@@ -74,11 +115,14 @@ export function App() {
               className="w-full rounded-md border border-white/10 bg-black/30 p-2"
               value={slice.mmrBracket}
               onChange={(e) => setSlice((s) => ({ ...s, mmrBracket: e.target.value as any }))}
+              disabled
+              title="Not used yet in MVP"
             >
               <option value="low">Low</option>
               <option value="mid">Mid</option>
               <option value="high">High</option>
             </select>
+            <div className="text-[11px] text-gray-500">(Not wired yet)</div>
           </div>
 
           <div className="space-y-2">
@@ -89,11 +133,14 @@ export function App() {
               onChange={(e) =>
                 setSlice((s) => ({ ...s, timeWindowDays: Number(e.target.value) as any }))
               }
+              disabled
+              title="Not used yet in MVP"
             >
               <option value={30}>30 days</option>
               <option value={60}>60 days</option>
               <option value={90}>90 days</option>
             </select>
+            <div className="text-[11px] text-gray-500">(Not wired yet)</div>
           </div>
         </section>
 
@@ -101,26 +148,58 @@ export function App() {
           <PickBox
             title="Allies"
             values={allies}
-            onAdd={(v) => add(allies, setAllies, v)}
+            catalogReady={!!catalog}
+            picker={
+              catalog ? (
+                <HeroPicker
+                  heroes={catalog.heroes}
+                  placeholder="Search hero…"
+                  onPick={(h) => addHero(allies, setAllies, h.shortId)}
+                />
+              ) : null
+            }
             onRemove={(v) => remove(allies, setAllies, v)}
           />
           <PickBox
             title="Enemies"
             values={enemies}
-            onAdd={(v) => add(enemies, setEnemies, v)}
+            catalogReady={!!catalog}
+            picker={
+              catalog ? (
+                <HeroPicker
+                  heroes={catalog.heroes}
+                  placeholder="Search hero…"
+                  onPick={(h) => addHero(enemies, setEnemies, h.shortId)}
+                />
+              ) : null
+            }
             onRemove={(v) => remove(enemies, setEnemies, v)}
           />
         </section>
 
-        <section className="flex items-center gap-3">
+        <section className="flex flex-wrap items-center gap-3">
           <button
             className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
             onClick={refresh}
-            disabled={loading}
+            disabled={loading || !provider}
           >
             {loading ? 'Calculating…' : 'Get recommendations'}
           </button>
+
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={autoRecalc}
+              onChange={(e) => setAutoRecalc(e.target.checked)}
+            />
+            Auto recalc (after changes)
+          </label>
+
+          {!provider ? <div className="text-sm text-gray-400">Loading…</div> : null}
           {error ? <div className="text-sm text-red-400">{error}</div> : null}
+          {autoRecalc && enemies.length === 0 ? (
+            <div className="text-sm text-gray-400">Pick at least 1 enemy to auto-recalc.</div>
+          ) : null}
         </section>
 
         <section className="space-y-3">
@@ -150,7 +229,9 @@ export function App() {
               </div>
             ))}
             {recs.length === 0 ? (
-              <div className="text-sm text-gray-400">No results yet. Click the button.</div>
+              <div className="text-sm text-gray-400">
+                No results yet. Pick enemies and click the button.
+              </div>
             ) : null}
           </div>
         </section>
@@ -162,39 +243,22 @@ export function App() {
 function PickBox(props: {
   title: string
   values: string[]
-  onAdd: (v: string) => void
   onRemove: (v: string) => void
+  picker: React.ReactNode
+  catalogReady: boolean
 }) {
-  const [input, setInput] = useState('')
-
   return (
     <div className="rounded-lg border border-white/10 bg-white/5 p-4">
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium">{props.title}</div>
       </div>
 
-      <div className="mt-2 flex gap-2">
-        <input
-          className="w-full rounded-md border border-white/10 bg-black/30 p-2 text-sm"
-          placeholder="Type hero id (e.g. axe)"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              props.onAdd(input)
-              setInput('')
-            }
-          }}
-        />
-        <button
-          className="rounded-md border border-white/10 bg-white/10 px-3 text-sm hover:bg-white/20"
-          onClick={() => {
-            props.onAdd(input)
-            setInput('')
-          }}
-        >
-          Add
-        </button>
+      <div className="mt-2">
+        {props.catalogReady ? (
+          props.picker
+        ) : (
+          <div className="text-xs text-gray-400">Loading heroes…</div>
+        )}
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
@@ -204,6 +268,7 @@ function PickBox(props: {
             className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs hover:bg-black/40"
             onClick={() => props.onRemove(v)}
             title="Remove"
+            type="button"
           >
             {v} ×
           </button>
