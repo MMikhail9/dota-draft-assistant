@@ -94,6 +94,7 @@ export async function fetchSynergyWinrate(params: {
 }): Promise<{ games: number; winrate: number } | null> {
   const { heroA, heroB } = params
 
+  // Co-play winrate: both heroes on same team.
   const sql = `
 SELECT
   COUNT(*) AS games,
@@ -114,7 +115,7 @@ LIMIT 1
     cacheKey: `opendota:synergy:v1:${heroA}:${heroB}`,
     ttlMs: 1000 * 60 * 60 * 24,
     retries: 2,
-    minDelayMs: 600,
+    minDelayMs: 650,
   })
 
   const row = res.rows[0]
