@@ -7,6 +7,7 @@ import { toCatalog, type HeroCatalog } from '../data/HeroCatalog'
 import { HeroPicker } from './HeroPicker'
 import { OpenDotaProvider } from '../data/OpenDotaProvider'
 import { useDebouncedEffect } from './useDebouncedEffect'
+import { Modal } from './Modal'
 
 export function App() {
   const [catalog, setCatalog] = useState<HeroCatalog | null>(null)
@@ -44,6 +45,8 @@ export function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [recs, setRecs] = useState<any[]>([])
+
+  const [selected, setSelected] = useState<any | null>(null)
 
   async function refresh() {
     if (!provider) return
@@ -233,9 +236,11 @@ export function App() {
             >
               <div className="grid gap-3">
                 {recs.map((r) => (
-                  <div
+                  <button
                     key={r.heroId}
-                    className="group rounded-xl border border-white/10 bg-gradient-to-b from-white/6 to-white/4 p-4"
+                    className="group w-full rounded-xl border border-white/10 bg-gradient-to-b from-white/6 to-white/4 p-4 text-left hover:border-white/20 hover:bg-white/5"
+                    onClick={() => setSelected(r)}
+                    type="button"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -244,22 +249,20 @@ export function App() {
                           <Pill label={`Score ${r.score}`} />
                           <Pill label={`Confidence ${r.confidence}`} />
                           <Pill label={`Games ${r.sampleSize}`} />
+                          <span className="text-xs text-gray-500">Click for details</span>
                         </div>
                       </div>
                     </div>
 
                     <ul className="mt-3 space-y-2 text-sm text-gray-200">
-                      {r.explanations.map((e: any, idx: number) => (
+                      {r.explanations.slice(0, 2).map((e: any, idx: number) => (
                         <li key={idx} className="leading-snug">
                           <div className="text-xs text-gray-400">{e.label}</div>
                           <div className="text-sm text-gray-200">{e.value}</div>
-                          {e.evidence ? (
-                            <div className="mt-0.5 text-xs text-gray-500">{e.evidence}</div>
-                          ) : null}
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  </button>
                 ))}
 
                 {recs.length === 0 ? (
@@ -287,6 +290,32 @@ export function App() {
           can be noisy for rare matchups.
         </footer>
       </main>
+
+      <Modal
+        open={!!selected}
+        title={selected ? `${selected.heroName} — details` : 'Details'}
+        onClose={() => setSelected(null)}
+      >
+        {selected ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Pill label={`Score ${selected.score}`} />
+              <Pill label={`Confidence ${selected.confidence}`} />
+              <Pill label={`Games ${selected.sampleSize}`} />
+            </div>
+
+            <div className="grid gap-3">
+              {selected.explanations.map((e: any, idx: number) => (
+                <div key={idx} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                  <div className="text-xs font-medium text-gray-300">{e.label}</div>
+                  <div className="mt-1 text-sm text-gray-100">{e.value}</div>
+                  {e.evidence ? <div className="mt-1 text-xs text-gray-500">{e.evidence}</div> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   )
 }
