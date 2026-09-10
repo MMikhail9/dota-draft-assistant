@@ -2,6 +2,7 @@ import type { DraftState, Recommendation } from '../domain/types'
 import type { DatasetSlice, StatsProvider } from './StatsProvider'
 import type { Hero, HeroCatalog } from './HeroCatalog'
 import { fetchHeroMatchups, type OpenDotaMatchupRow } from './opendota'
+import { mapPool } from './pool'
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -103,13 +104,18 @@ export class OpenDotaProvider implements StatsProvider {
   async getRecommendations(draft: DraftState, slice: DatasetSlice): Promise<Recommendation[]> {
     const excluded = new Set([...draft.allies, ...draft.enemies])
 
-    // Enemy matchup tables.
-    const enemyTables: Record<string, OpenDotaMatchupRow[]> = {}
-    for (const e of draft.enemies) {
-      const hero = this.catalog.byShortId.get(e)
-      if (!hero) continue
-      enemyTables[e] = await fetchHeroMatchups(hero.numericId)
-    }
+    // Fetch enemy matchup tables with a small concurrency limit to reduce bursts.
+    const enemiesResolved = draft.enemies
+      .map((e) => ({ shortId: e, hero: this.catalog.byShortId.get(e) }))
+      .filter((x) => x.hero)
+      .map((x) => ({ shortId: x.shortId, hero: x.hero! }))
+
+    const tables = await mapPool(enemiesResolved, 2, async (e) => {
+      const rows = await fetchHeroMatchups(e.hero.numericId)
+      return [e.shortId, rows] as const
+    })
+
+    const enemyTables: Record<string, OpenDotaMatchupRow[]> = Object.fromEntries(tables)
 
     const alliesResolved = draft.allies
       .map((a) => this.catalog.byShortId.get(a))
