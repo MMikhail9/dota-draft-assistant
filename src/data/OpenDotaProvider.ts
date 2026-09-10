@@ -1,6 +1,6 @@
 import type { DraftState, Recommendation } from '../domain/types'
 import type { DatasetSlice, StatsProvider } from './StatsProvider'
-import type { HeroCatalog } from './HeroCatalog'
+import type { Hero, HeroCatalog } from './HeroCatalog'
 import { fetchHeroMatchups, type OpenDotaMatchupRow } from './opendota'
 
 function clamp(n: number, min: number, max: number) {
@@ -35,12 +35,66 @@ function roleFitScore(roles: string[], pos: number): number {
   return hits / want.length
 }
 
-type EnemyCounterDetail = {
-  enemyShortId: string
-  enemyName: string
+type EnemyDetail = {
+  heroShortId: string
+  heroName: string
   games: number
-  candidateWinrate: number // estimated candidate winrate vs enemy
+  candidateWinrate: number // estimated candidate winrate vs that hero
   delta: number // candidate wr - 0.5
+}
+
+type AllyDetail = {
+  heroShortId: string
+  heroName: string
+  score: number
+  reason: string
+}
+
+function overlapCount(a: string[], b: string[]): number {
+  const s = new Set(a)
+  let c = 0
+  for (const x of b) if (s.has(x)) c++
+  return c
+}
+
+function synergyHeuristic(candidate: Hero, ally: Hero): AllyDetail {
+  // MVP heuristic: reward complementary archetypes and some known pairings.
+  // This is not a winrate and must be presented as heuristic.
+  const c = candidate.roles
+  const a = ally.roles
+
+  const overlap = overlapCount(c, a)
+
+  const supportish = ['Support', 'Disabler', 'Healer']
+  const coreish = ['Carry', 'Nuker', 'Escape', 'Durable']
+
+  const candSupport = overlapCount(c, supportish)
+  const candCore = overlapCount(c, coreish)
+  const allySupport = overlapCount(a, supportish)
+  const allyCore = overlapCount(a, coreish)
+
+  let score = 0
+  const parts: string[] = []
+
+  if (candCore > 0 && allySupport > 0) {
+    score += 1.2
+    parts.push('core+support')
+  }
+  if (candSupport > 0 && allyCore > 0) {
+    score += 1.2
+    parts.push('support+core')
+  }
+
+  // Too much role overlap can be a warning.
+  score -= overlap * 0.25
+  if (overlap > 0) parts.push(`role overlap x${overlap}`)
+
+  return {
+    heroShortId: ally.shortId,
+    heroName: ally.name,
+    score,
+    reason: parts.length ? parts.join(', ') : 'no strong signal',
+  }
 }
 
 export class OpenDotaProvider implements StatsProvider {
@@ -49,6 +103,7 @@ export class OpenDotaProvider implements StatsProvider {
   async getRecommendations(draft: DraftState, slice: DatasetSlice): Promise<Recommendation[]> {
     const excluded = new Set([...draft.allies, ...draft.enemies])
 
+    // Enemy matchup tables.
     const enemyTables: Record<string, OpenDotaMatchupRow[]> = {}
     for (const e of draft.enemies) {
       const hero = this.catalog.byShortId.get(e)
@@ -56,14 +111,19 @@ export class OpenDotaProvider implements StatsProvider {
       enemyTables[e] = await fetchHeroMatchups(hero.numericId)
     }
 
+    const alliesResolved = draft.allies
+      .map((a) => this.catalog.byShortId.get(a))
+      .filter(Boolean) as Hero[]
+
     const candidates = this.catalog.heroes
       .filter((h) => !excluded.has(h.shortId))
       .slice(0, 100)
 
     const recs: Recommendation[] = candidates.map((c, idx) => {
+      // --- counters (data-driven) ---
       let counterScore = 0
       let counterGames = 0
-      const details: EnemyCounterDetail[] = []
+      const enemyDetails: EnemyDetail[] = []
 
       for (const enemyShortId of draft.enemies) {
         const rows = enemyTables[enemyShortId]
@@ -80,38 +140,65 @@ export class OpenDotaProvider implements StatsProvider {
         counterGames += row.games_played
 
         const enemyHero = this.catalog.byShortId.get(enemyShortId)
-        details.push({
-          enemyShortId,
-          enemyName: enemyHero?.name ?? enemyShortId,
+        enemyDetails.push({
+          heroShortId: enemyShortId,
+          heroName: enemyHero?.name ?? enemyShortId,
           games: row.games_played,
           candidateWinrate: wrCandidateVsEnemy,
           delta,
         })
       }
 
-      details.sort((a, b) => b.delta - a.delta)
-      const best = details.slice(0, 2)
+      enemyDetails.sort((a, b) => b.delta - a.delta)
+      const bestVs = enemyDetails.slice(0, 2)
+      const worstVs = [...enemyDetails].sort((a, b) => a.delta - b.delta).slice(0, 1)
+
+      const bestVsStr =
+        bestVs.length === 0
+          ? 'No matchup rows for selected enemies'
+          : bestVs
+              .map(
+                (b) =>
+                  `${b.heroName}: ${Math.round(b.candidateWinrate * 100)}% (Δ${Math.round(b.delta * 1000) / 10}%, games=${b.games})`,
+              )
+              .join('; ')
+
+      const worstVsStr =
+        worstVs.length === 0
+          ? '—'
+          : worstVs
+              .map(
+                (b) =>
+                  `${b.heroName}: ${Math.round(b.candidateWinrate * 100)}% (Δ${Math.round(b.delta * 1000) / 10}%, games=${b.games})`,
+              )
+              .join('; ')
+
+      // --- synergy (heuristic) ---
+      const allySynergy = alliesResolved
+        .map((a) => synergyHeuristic(c, a))
+        .sort((x, y) => y.score - x.score)
+
+      const bestWith = allySynergy.slice(0, 2).filter((x) => x.score > 0)
+      const bestWithStr =
+        draft.allies.length === 0
+          ? 'No allies selected'
+          : bestWith.length === 0
+            ? 'No positive heuristic signal'
+            : bestWith.map((x) => `${x.heroName} (${x.reason})`).join('; ')
 
       const roleFit = roleFitScore(c.roles, draft.role)
 
-      // Normalize to a 0..100-ish score.
+      // Score scale: counter (data) + synergy (heuristic) + role-fit.
+      const synergyScore = clamp(bestWith.reduce((s, x) => s + x.score, 0) * 6, 0, 12)
+
       const score =
         60 +
         clamp(counterScore * 110, -35, 35) +
+        synergyScore +
         clamp((roleFit - 0.5) * 30, -15, 15) -
         idx * 0.03
 
       const sampleSize = counterGames
-
-      const bestStr =
-        best.length === 0
-          ? 'No matchup rows for selected enemies'
-          : best
-              .map(
-                (b) =>
-                  `${b.enemyName}: ${Math.round(b.candidateWinrate * 100)}% (Δ${Math.round(b.delta * 1000) / 10}%, games=${b.games})`,
-              )
-              .join('; ')
 
       return {
         heroId: c.shortId,
@@ -121,9 +208,19 @@ export class OpenDotaProvider implements StatsProvider {
         sampleSize,
         explanations: [
           {
-            label: 'Top counters (est.)',
-            value: bestStr,
-            evidence: 'Computed from enemy matchup tables (OpenDota)',
+            label: 'Best vs (est.)',
+            value: bestVsStr,
+            evidence: 'OpenDota matchup tables',
+          },
+          {
+            label: 'Worst vs (est.)',
+            value: worstVsStr,
+            evidence: 'OpenDota matchup tables',
+          },
+          {
+            label: 'Best with (heuristic)',
+            value: bestWithStr,
+            evidence: 'Role-tag based heuristic (not winrate)',
           },
           {
             label: 'Role fit (approx)',
