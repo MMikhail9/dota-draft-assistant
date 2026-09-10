@@ -20,7 +20,6 @@ function confidenceFromSample(sample: number): 'high' | 'medium' | 'low' {
 }
 
 function roleFitScore(roles: string[], pos: number): number {
-  // Very approximate mapping for MVP.
   const want =
     pos === 1
       ? ['Carry']
@@ -40,8 +39,8 @@ type EnemyDetail = {
   heroShortId: string
   heroName: string
   games: number
-  candidateWinrate: number // estimated candidate winrate vs that hero
-  delta: number // candidate wr - 0.5
+  candidateWinrate: number
+  delta: number
 }
 
 type AllyDetail = {
@@ -59,8 +58,6 @@ function overlapCount(a: string[], b: string[]): number {
 }
 
 function synergyHeuristic(candidate: Hero, ally: Hero): AllyDetail {
-  // MVP heuristic: reward complementary archetypes and some known pairings.
-  // This is not a winrate and must be presented as heuristic.
   const c = candidate.roles
   const a = ally.roles
 
@@ -86,7 +83,6 @@ function synergyHeuristic(candidate: Hero, ally: Hero): AllyDetail {
     parts.push('support+core')
   }
 
-  // Too much role overlap can be a warning.
   score -= overlap * 0.25
   if (overlap > 0) parts.push(`role overlap x${overlap}`)
 
@@ -98,13 +94,18 @@ function synergyHeuristic(candidate: Hero, ally: Hero): AllyDetail {
   }
 }
 
+function explainCounterRow(d: EnemyDetail): string {
+  const wr = Math.round(d.candidateWinrate * 100)
+  const delta = Math.round(d.delta * 1000) / 10
+  return `${d.heroName}: ${wr}% (Δ${delta}%, games=${d.games})`
+}
+
 export class OpenDotaProvider implements StatsProvider {
   constructor(private catalog: HeroCatalog) {}
 
   async getRecommendations(draft: DraftState, slice: DatasetSlice): Promise<Recommendation[]> {
     const excluded = new Set([...draft.allies, ...draft.enemies])
 
-    // Fetch enemy matchup tables with a small concurrency limit to reduce bursts.
     const enemiesResolved = draft.enemies
       .map((e) => ({ shortId: e, hero: this.catalog.byShortId.get(e) }))
       .filter((x) => x.hero)
@@ -126,8 +127,7 @@ export class OpenDotaProvider implements StatsProvider {
       .slice(0, 100)
 
     const recs: Recommendation[] = candidates.map((c, idx) => {
-      // --- counters (data-driven) ---
-      let counterScore = 0
+      let counterDeltaSum = 0
       let counterGames = 0
       const enemyDetails: EnemyDetail[] = []
 
@@ -142,7 +142,7 @@ export class OpenDotaProvider implements StatsProvider {
         const wrCandidateVsEnemy = 1 - wrEnemyVsCandidate
         const delta = wrCandidateVsEnemy - 0.5
 
-        counterScore += delta
+        counterDeltaSum += delta
         counterGames += row.games_played
 
         const enemyHero = this.catalog.byShortId.get(enemyShortId)
@@ -159,32 +159,15 @@ export class OpenDotaProvider implements StatsProvider {
       const bestVs = enemyDetails.slice(0, 2)
       const worstVs = [...enemyDetails].sort((a, b) => a.delta - b.delta).slice(0, 1)
 
-      const bestVsStr =
-        bestVs.length === 0
-          ? 'No matchup rows for selected enemies'
-          : bestVs
-              .map(
-                (b) =>
-                  `${b.heroName}: ${Math.round(b.candidateWinrate * 100)}% (Δ${Math.round(b.delta * 1000) / 10}%, games=${b.games})`,
-              )
-              .join('; ')
+      const bestVsStr = bestVs.length ? bestVs.map(explainCounterRow).join('; ') : '—'
+      const worstVsStr = worstVs.length ? worstVs.map(explainCounterRow).join('; ') : '—'
 
-      const worstVsStr =
-        worstVs.length === 0
-          ? '—'
-          : worstVs
-              .map(
-                (b) =>
-                  `${b.heroName}: ${Math.round(b.candidateWinrate * 100)}% (Δ${Math.round(b.delta * 1000) / 10}%, games=${b.games})`,
-              )
-              .join('; ')
-
-      // --- synergy (heuristic) ---
       const allySynergy = alliesResolved
         .map((a) => synergyHeuristic(c, a))
         .sort((x, y) => y.score - x.score)
 
       const bestWith = allySynergy.slice(0, 2).filter((x) => x.score > 0)
+
       const bestWithStr =
         draft.allies.length === 0
           ? 'No allies selected'
@@ -194,25 +177,28 @@ export class OpenDotaProvider implements StatsProvider {
 
       const roleFit = roleFitScore(c.roles, draft.role)
 
-      // Score scale: counter (data) + synergy (heuristic) + role-fit.
-      const synergyScore = clamp(bestWith.reduce((s, x) => s + x.score, 0) * 6, 0, 12)
+      // Score breakdown (simple + explainable):
+      // - Counter delta sum dominates (data-driven)
+      // - Role fit nudges
+      // - Synergy heuristic small bonus
+      const counterComponent = clamp(counterDeltaSum * 110, -35, 35)
+      const roleComponent = clamp((roleFit - 0.5) * 30, -15, 15)
+      const synergyComponent = clamp(bestWith.reduce((s, x) => s + x.score, 0) * 6, 0, 12)
 
-      const score =
-        60 +
-        clamp(counterScore * 110, -35, 35) +
-        synergyScore +
-        clamp((roleFit - 0.5) * 30, -15, 15) -
-        idx * 0.03
-
-      const sampleSize = counterGames
+      const score = 60 + counterComponent + synergyComponent + roleComponent - idx * 0.03
 
       return {
         heroId: c.shortId,
         heroName: c.name,
         score: Math.round(score * 10) / 10,
-        confidence: confidenceFromSample(sampleSize),
-        sampleSize,
+        confidence: confidenceFromSample(counterGames),
+        sampleSize: counterGames,
         explanations: [
+          {
+            label: 'Score breakdown',
+            value: `Counters ${Math.round(counterComponent * 10) / 10} + Synergy ${Math.round(synergyComponent * 10) / 10} + Role ${Math.round(roleComponent * 10) / 10}`,
+            evidence: 'Heuristic weights; counters are data-driven',
+          },
           {
             label: 'Best vs (est.)',
             value: bestVsStr,
