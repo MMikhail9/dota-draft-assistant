@@ -78,7 +78,7 @@ export async function fetchHeroMatchups(heroId: number): Promise<OpenDotaMatchup
   return fetchJson<OpenDotaMatchupRow[]>(
     `https://api.opendota.com/api/heroes/${heroId}/matchups`,
     {
-      cacheKey: `opendota:heroMatchups:v1:${heroId}`,
+      cacheKey: `opendota:heroMatchups:v2:${heroId}`,
       ttlMs: 1000 * 60 * 60 * 24,
       retries: 2,
       minDelayMs: 400,
@@ -115,7 +115,7 @@ LIMIT 1
   const url = `https://api.opendota.com/api/explorer?${qs.toString()}`
 
   const res = await fetchJson<OpenDotaExplorerResult>(url, {
-    cacheKey: `opendota:synergy:v1:${heroA}:${heroB}`,
+    cacheKey: `opendota:synergy:v2:${heroA}:${heroB}`,
     ttlMs: 1000 * 60 * 60 * 24,
     retries: 2,
     minDelayMs: 650,
