@@ -108,6 +108,7 @@ LIMIT 1
 `.trim()
 
   const url = `https://api.opendota.com/api/explorer?sql=${encodeURIComponent(sql)}`
+
   const res = await fetchJson<OpenDotaExplorerResult>(url, {
     cacheKey: `opendota:synergy:v1:${heroA}:${heroB}`,
     ttlMs: 1000 * 60 * 60 * 24,
