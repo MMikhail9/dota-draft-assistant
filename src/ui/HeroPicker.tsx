@@ -1,6 +1,19 @@
 import { useMemo, useState } from 'react'
 import type { Hero } from '../data/HeroCatalog'
 
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function isSubsequence(query: string, target: string): boolean {
+  // e.g. 'shad' matches 'shadow'
+  let qi = 0
+  for (let ti = 0; ti < target.length && qi < query.length; ti++) {
+    if (target[ti] === query[qi]) qi++
+  }
+  return qi === query.length
+}
+
 export function HeroPicker(props: {
   heroes: Hero[]
   placeholder: string
@@ -9,11 +22,36 @@ export function HeroPicker(props: {
   const [q, setQ] = useState('')
 
   const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase()
+    const raw = q.trim()
+    const query = normalize(raw)
+
     if (!query) return props.heroes.slice(0, 30)
-    return props.heroes
-      .filter((h) => h.name.toLowerCase().includes(query) || h.shortId.includes(query))
+
+    const scored = props.heroes
+      .map((h) => {
+        const nameNorm = normalize(h.name)
+        const idNorm = normalize(h.shortId)
+
+        // Score:
+        // 0 = exact/prefix, 1 = substring, 2 = subsequence, 9 = no match
+        const score =
+          idNorm === query || nameNorm === query
+            ? 0
+            : idNorm.startsWith(query) || nameNorm.startsWith(query)
+              ? 0
+              : idNorm.includes(query) || nameNorm.includes(query)
+                ? 1
+                : isSubsequence(query, idNorm) || isSubsequence(query, nameNorm)
+                  ? 2
+                  : 9
+
+        return { h, score }
+      })
+      .filter((x) => x.score < 9)
+      .sort((a, b) => a.score - b.score || a.h.name.localeCompare(b.h.name))
       .slice(0, 30)
+
+    return scored.map((x) => x.h)
   }, [q, props.heroes])
 
   return (
